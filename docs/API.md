@@ -9,6 +9,7 @@ Ce document fait foi pour le front et le back ; en cas de changement, le mettre 
 - Session requise : `connecté`, `idCompte`, `idAsso`, `role` (voir `CLAUDE.md`). Rôles : 1 gestionnaire, 2 barman,
   3 client, 4 super-admin.
 - Tout `POST` contient `token_csrf` (valeur de `$_SESSION['token']`). Sinon l'action est refusée.
+- `$_SESSION['token']` change à la connexion et à la déconnexion : les vues le lisent au moment de l'affichage, jamais en cache.
 - Refus de droit : message « Droit requis non perçu. » affiché dans la vue (pas de code HTTP 403).
 - Sorties HTML : échapper avec `h()`.
 

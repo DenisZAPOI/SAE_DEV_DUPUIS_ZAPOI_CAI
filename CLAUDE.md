@@ -14,7 +14,7 @@ historique, récapitulatif de la journée, gestion du staff.
 ## Dossiers importants (tout le code est dans `Git/`)
 - `index.php` : routeur (`?module=`), puis `template.php` (layout, navbar selon `$_SESSION['role']`).
 - `modules/module_<nom>/` : un module MVC = `module_`, `controleur_`, `modele_`, `vue_<nom>.php`.
-- `utils/` : `Config` (lecture de `.env`), `Connexion` (PDO), `Token_CSRF`, `VueGenerique` ; `html_spe_char.php` : helper `h()`.
+- `utils/` : `Config` (lecture de `.env`), `Connexion` (PDO), `Session` (démarrage et renouvellement de l'identifiant), `Token_CSRF`, `VueGenerique` ; `html_spe_char.php` : helper `h()`.
 - `docs/API.md` : contrat entre vues et contrôleurs (routes, champs, rôles).
 - `tests/` : tests PHPUnit ; `.env.example` : variables attendues ; `.gitignore` : exclusions (secrets, vendor, logs, dumps).
 
@@ -47,8 +47,8 @@ Vérifié le 30/09/2026 sur Ubuntu 24.04 (PHP 8.3.6, PHPUnit 9.6.17).
 - Configurer : copier `.env.example` en `.env` à la racine du projet et le renseigner ; `Git/utils/config.php` le lit
   (une variable d'environnement du serveur prime). Sans `.env`, la connexion échoue avec « Configuration manquante ».
 - Lancer : `php -S localhost:8000 -t Git`, puis http://localhost:8000/index.php (MySQL requis, schéma non fourni).
-- Tests : `phpunit` (config `phpunit.xml.dist`, dossier `tests/`). Résultat : **OK, 37 tests, 84 assertions, 1 ignoré**
-  en ~1,5 s ; le test ignoré (`docs/API.md` absent) vérifie 49 actions dès que ce fichier est fusionné.
+- Tests : `phpunit` (config `phpunit.xml.dist`, dossier `tests/`). Résultat : **OK, 53 tests, 180 assertions** en ~3 s.
+  `SessionFixationTest` lance `php -S` sur `tests/fixtures/serveur_app.php` (vrai `index.php`, base du stub).
 - Syntaxe seule : `find Git -name '*.php' -exec php -l {} \;` → aucune erreur.
 - Les tests n'utilisent **pas MySQL** : `tests/stubs/utils/connexion.php` (SQLite en mémoire, schéma minimal
   `tests/schema.sql`) est placé en tête de l'`include_path` par `tests/bootstrap.php`.
@@ -71,6 +71,9 @@ Vérifié le 30/09/2026 sur Ubuntu 24.04 (PHP 8.3.6, PHPUnit 9.6.17).
 - Rôles (`Utilisateur.idRole`) : 1 gestionnaire, 2 barman, 3 client, 4 super-admin. Chaque action de contrôleur
   vérifie le rôle, sinon `vue->message('Droit requis non perçu.')`.
 - Formulaire POST : champ caché `token_csrf`, vérifié par `Token_CSRF::check_csrf()`.
+- Session : seul `index.php` la démarre (`Session::demarrer()`) ; ne jamais appeler `session_start()` ni
+  `session_regenerate_id()` dans un module : le socle renouvelle l'identifiant quand `connecté`, `idCompte`,
+  `idAsso` ou `role` changent.
 - SQL : requêtes préparées PDO uniquement. Mots de passe : `password_hash` / `password_verify`.
 - Sorties HTML échappées avec `h()`. Code, noms et messages en français, indentation de 4 espaces.
 

@@ -1,6 +1,8 @@
 <?php
 use PHPUnit\Framework\TestCase;
 
+require_once dirname(__DIR__) . '/Git/utils/session.php';
+
 /**
  * AUTH-01 — fixation de session, testée de bout en bout.
  *
@@ -144,7 +146,84 @@ class SessionFixationTest extends TestCase
         $idConnecte = $idRecu ?? $id;
 
         [, $idApres] = $this->requete('module=connexion&action=deconnexion', $idConnecte);
-        $this->assertNotNull($idApres);
+        $this->assertNotNull($idApres, "AUTH-01 : aucun nouvel identifiant à la déconnexion");
         $this->assertNotSame($idConnecte, $idApres, "AUTH-01 : la déconnexion garde le même identifiant");
+    }
+
+    /** Écrit directement une session côté serveur (format du gestionnaire « php ») et retourne son identifiant. */
+    private function sessionExistante(array $donnees): string
+    {
+        $id = bin2hex(random_bytes(16));
+        $contenu = '';
+        foreach ($donnees as $cle => $valeur) {
+            $contenu .= $cle . '|' . serialize($valeur);
+        }
+        file_put_contents(self::$dossierSessions . "/sess_$id", $contenu);
+        return $id;
+    }
+
+    private function sessionAlice(array $enPlus = []): array
+    {
+        return $enPlus + ['token' => str_repeat('ab', 32), 'login' => self::LOGIN, 'connecté' => true, 'idCompte' => 1, '_cree_le' => time()];
+    }
+
+    /** Au-delà de 30 min, l'identifiant change ; l'ancien reste utilisable pendant le délai de grâce. */
+    public function testAuth01RotationPeriodique(): void
+    {
+        $idAncien = $this->sessionExistante($this->sessionAlice(['_cree_le' => time() - Session::DUREE_ROTATION - 1]));
+
+        [, $idNouveau] = $this->requete('module=connexion', $idAncien);
+        $this->assertNotNull($idNouveau, "L'identifiant aurait dû être renouvelé après 30 min");
+        $this->assertNotSame($idAncien, $idNouveau);
+
+        [$corps] = $this->requete('module=connexion', $idNouveau);
+        $this->assertFalse($this->afficheFormulaireConnexion($corps), 'La rotation ne doit pas déconnecter');
+        [$corps] = $this->requete('module=connexion', $idAncien);
+        $this->assertFalse($this->afficheFormulaireConnexion($corps), 'Une requête concurrente avec l\'ancien identifiant doit passer');
+    }
+
+    /** Passé le délai de grâce, l'ancien identifiant n'ouvre plus qu'une session vide. */
+    public function testAuth01AncienIdentifiantRefuseApresLeDelaiDeGrace(): void
+    {
+        $idAncien = $this->sessionExistante($this->sessionAlice(['_obsolete_depuis' => time() - Session::DELAI_GRACE - 1]));
+
+        [$corps, $idRecu] = $this->requete('module=connexion', $idAncien);
+        $this->assertTrue($this->afficheFormulaireConnexion($corps), "L'ancien identifiant donne encore accès à la session");
+        $this->assertNotNull($idRecu);
+        $this->assertNotSame($idAncien, $idRecu);
+    }
+
+    /** Changement de rôle (ici : admin qui choisit une association) : nouvel identifiant, jeton inchangé car la page affiche un formulaire. */
+    public function testAuth01ChangementDeRoleRenouvelleLIdentifiantSansCasserLeFormulaire(): void
+    {
+        $jeton = str_repeat('cd', 32);
+        $id = $this->sessionExistante(['token' => $jeton, 'login' => 'admin', 'connecté' => true, 'idCompte' => 1, '_cree_le' => time()]);
+
+        [, $idRecu] = $this->requete('module=connexion&action=choisirAsso', $id);
+        $this->assertNotNull($idRecu, "Le passage au rôle super-admin doit renouveler l'identifiant");
+        $this->assertNotSame($id, $idRecu);
+        [$corps] = $this->requete('module=connexion&action=inscription', $idRecu);
+        $this->assertSame($jeton, $this->jeton($corps), 'Le jeton déjà affiché dans la page doit rester valide');
+    }
+
+    public function testAuth01ActionsSensibles(): void
+    {
+        $this->assertTrue(Session::estActionSensible('commande', 'ajout_produit'));
+        $this->assertTrue(Session::estActionSensible('restock', 'ajoutAchat'));
+        $this->assertTrue(Session::estActionSensible('restock', 'ajoutStock'));
+        $this->assertFalse(Session::estActionSensible('commande', 'reload'));
+        $this->assertFalse(Session::estActionSensible('stock', 'ajoutAchat'));
+    }
+
+    /** Après une action sensible, l'identifiant change sans déconnecter. */
+    public function testAuth01RotationApresUneActionSensible(): void
+    {
+        $idAncien = $this->sessionExistante($this->sessionAlice(['role' => 2, 'idAsso' => 1]));
+
+        [, $idNouveau] = $this->requete('module=commande&action=ajout_produit', $idAncien, ['token_csrf' => str_repeat('ab', 32)]);
+        $this->assertNotNull($idNouveau, "L'identifiant aurait dû être renouvelé après la commande");
+        $this->assertNotSame($idAncien, $idNouveau);
+        [$corps] = $this->requete('module=connexion', $idNouveau);
+        $this->assertFalse($this->afficheFormulaireConnexion($corps));
     }
 }

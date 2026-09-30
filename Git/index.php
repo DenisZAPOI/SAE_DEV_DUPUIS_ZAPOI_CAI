@@ -1,15 +1,13 @@
 <?php
-session_start();
+// Toute la page est mise en tampon : les en-têtes (cookie de session renouvelé,
+// redirections) peuvent être envoyés jusqu'à la fin de la requête.
+ob_start();
 
+require_once "utils/session.php";
+Session::demarrer(); // AUTH-01 : mode strict, jeton CSRF, renouvellement de l'identifiant
 
 require_once "html_spe_char.php";
 require_once "utils/token_csrf.php";
-
-
-
-if (empty($_SESSION['token'])) {
-    $_SESSION['token'] = bin2hex(random_bytes(32));
-}
 
 
 

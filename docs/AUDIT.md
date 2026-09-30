@@ -13,7 +13,7 @@ Critique : compromission directe (secret exploitable, RCE). Haute : élévation 
 | ID | Titre | Localisation | Gravité | Statut | Auteur |
 |---|---|---|---|---|---|
 | SEC-01 | Identifiants de BDD en clair (code + historique) | `Git/utils/connexion.php:9` + historique | **Critique** | Code corrigé (`fix/F1-secrets-bdd-env`) ; rotation et purge de l'historique à faire | IA, vérifiée manuellement |
-| AUTH-01 | Fixation de session (pas de régénération d'ID) | tout le dépôt / `Git/index.php:2` | **Haute** | Confirmée | IA, vérifiée manuellement |
+| AUTH-01 | Fixation de session (pas de régénération d'ID) | tout le dépôt / `Git/index.php:2` | **Haute** | Corrigée (`fix/F2-regeneration-session`) | IA, vérifiée manuellement |
 | AUTH-05 | Sortie parasite avant `<?php` → `headers already sent` | `Git/html_spe_char.php:1` | Moyenne | Confirmée | IA, vérifiée manuellement |
 | AUTH-02 | Cookie de session sans HttpOnly/Secure/SameSite | `Git/index.php:2` | Moyenne | Confirmée | IA, vérifiée manuellement |
 | XSS-01 | `h()` laisse passer les URL `javascript:` | `Git/html_spe_char.php:5` | Moyenne | Confirmée | Étudiant |
@@ -65,6 +65,7 @@ RESULTAT: ID inchange -> session fixee par lattaquant conserve la session admin
 ```
 **Test de non-régression** : `testAuth01RegenerationSession` — échoue tant que `session_regenerate_id` est absent.
 **Correctif attendu** : activer `session.use_strict_mode` et régénérer l'ID + le jeton CSRF à chaque connexion/changement de rôle.
+**État du correctif** : classe `Session` (`Git/utils/session.php`), appelée une seule fois par `Git/index.php` (branche `fix/F2-regeneration-session`). Mode strict et cookies seuls ; en fin de requête, le socle compare l'identité de session (`connecté`, `idCompte`, `idAsso`, `role`) avant et après le module : si elle change, nouvel identifiant et suppression immédiate de l'ancien, avec renouvellement du jeton CSRF à la connexion et à la déconnexion. Rotation supplémentaire toutes les 30 min et après `commande/ajout_produit`, `restock/ajoutAchat`, `restock/ajoutStock`, avec un délai de grâce de 60 s pour l'ancien identifiant (requêtes AJAX concurrentes). `ob_start()` en tête de `index.php` garantit que le cookie peut encore partir, y compris après les `header(); exit;` des modules ; AUTH-05 reste à corriger. Test de bout en bout : `tests/SessionFixationTest.php` (attaque rejouée sur le vrai routeur via `php -S`).
 
 ## AUTH-05 — Sortie parasite avant `<?php` (Moyenne, Confirmée)
 **Localisation** : `Git/html_spe_char.php:1` (un `\n` avant la balise), inclus par `Git/index.php:5`.
