@@ -12,7 +12,7 @@ Critique : compromission directe (secret exploitable, RCE). Haute : élévation 
 
 | ID | Titre | Localisation | Gravité | Statut | Auteur |
 |---|---|---|---|---|---|
-| SEC-01 | Identifiants de BDD en clair (code + historique) | `Git/utils/connexion.php:9` + historique | **Critique** | Confirmée | IA, vérifiée manuellement |
+| SEC-01 | Identifiants de BDD en clair (code + historique) | `Git/utils/connexion.php:9` + historique | **Critique** | Code corrigé (`fix/F1-secrets-bdd-env`) ; rotation et purge de l'historique à faire | IA, vérifiée manuellement |
 | AUTH-01 | Fixation de session (pas de régénération d'ID) | tout le dépôt / `Git/index.php:2` | **Haute** | Confirmée | IA, vérifiée manuellement |
 | AUTH-05 | Sortie parasite avant `<?php` → `headers already sent` | `Git/html_spe_char.php:1` | Moyenne | Confirmée | IA, vérifiée manuellement |
 | AUTH-02 | Cookie de session sans HttpOnly/Secure/SameSite | `Git/index.php:2` | Moyenne | Confirmée | IA, vérifiée manuellement |
@@ -45,6 +45,7 @@ dbname=dutinfopw201699',$user='dutinfopw201699',$password='juh*****'
 ```
 **Test de non-régression** : `testSec01AucunSecretEnClair` — échoue tant qu'un `$password='...'` figure dans le fichier.
 **Correctif attendu** : changer les trois mots de passe (déjà compromis), lire les identifiants depuis `.env`, réécrire l'historique.
+**État du correctif** : identifiants lus depuis `.env` ou l'environnement par `Git/utils/config.php` (branche `fix/F1-secrets-bdd-env`), lignes commentées contenant d'anciens mots de passe supprimées. Restent à faire hors PR : changer les trois mots de passe auprès des hébergeurs, puis réécrire l'historique (`git filter-repo`) et forcer la mise à jour de toutes les branches.
 
 ## AUTH-01 — Fixation de session (Haute, Confirmée)
 **Localisation** : aucun `session_regenerate_id()` dans le dépôt ; `session_start()` en `Git/index.php:2`.

@@ -45,8 +45,8 @@ class ProjetTest extends TestCase {
         }
     }
 
-    /** Règle « jamais de secret » : seul connexion.php contient encore des identifiants (dette connue, à externaliser). */
-    public function testAucunSecretEnDurHormisConnexionPhp(): void {
+    /** Règle « jamais de secret » : aucun identifiant en dur dans Git/ (SEC-01 corrigée, lecture via .env). */
+    public function testAucunSecretEnDur(): void {
         $suspects = [];
         foreach (self::fichiersPhp() as $fichier) {
             $code = file_get_contents($fichier);
@@ -54,7 +54,7 @@ class ProjetTest extends TestCase {
                 $suspects[] = substr($fichier, strlen(RACINE) + 1);
             }
         }
-        $this->assertSame(['Git/utils/connexion.php'], $suspects, 'Nouveau secret en dur, ou dette résolue : mettre ce test à jour.');
+        $this->assertSame([], $suspects, 'Secret en dur détecté : le lire via Config::get() et .env.');
     }
 
     public function testEnvEstIgnoreParGit(): void {
