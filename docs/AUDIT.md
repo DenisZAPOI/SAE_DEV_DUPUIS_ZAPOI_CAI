@@ -1,223 +1,181 @@
 # AUDIT.md — audit de sécurité du domaine « Socle »
 
-Date : 30/09/2026 — Audit en lecture seule : **aucun fichier du dépôt n'a été modifié**.
+- **Périmètre** : domaine Socle (`Git/index.php`, `Git/html_spe_char.php`, `Git/utils/`, `Git/composants/composant_menu/{composant,controleur}_menu.php`) et contrat `docs/API.md`.
+- **Environnement du TP** : Ubuntu 24.04, PHP 8.3.6, PHPUnit 9.6.17, le 30/09/2026.
+- **Méthode** : pour chaque faille, lecture du code sur GitHub, puis script ou test exécuté dans l'environnement du TP. Les sorties brutes sont reproduites ci-dessous. Un test de non-régression (`tests/AuditSecuriteTest.php`) affirme le comportement sécurisé attendu : il **échoue avant correctif** et deviendra vert une fois la faille corrigée.
+- **Audit en lecture seule** : cette PR n'ajoute que `docs/AUDIT.md`, aucun code n'est modifié. Le test de non-régression `tests/AuditSecuriteTest.php` est volontairement rouge : il est conservé sur la branche `tests/non-regression-audit` (non fusionnée, pour ne pas casser `phpunit` sur `main`) et sera intégré avec chaque PR de correctif.
 
-## Périmètre
+## Barème de gravité
+Critique : compromission directe (secret exploitable, RCE). Haute : élévation de privilège ou vol de session. Moyenne : exploitation conditionnelle ou défense manquante. Faible : durcissement.
 
-Domaine **Socle (back)** défini dans `CLAUDE.md`, chemins relatifs à `Git/` :
+## Tableau de synthèse
 
-- `index.php` (routeur, session)
-- `html_spe_char.php` (helper `h()`)
-- `utils/connexion.php`, `utils/token_csrf.php`, `utils/vue_generique.php`
-- `composants/composant_menu/composant_menu.php`, `composants/composant_menu/controleur_menu.php`
+| ID | Titre | Localisation | Gravité | Statut | Auteur |
+|---|---|---|---|---|---|
+| SEC-01 | Identifiants de BDD en clair (code + historique) | `Git/utils/connexion.php:9` + historique | **Critique** | Confirmée | IA, vérifiée manuellement |
+| AUTH-01 | Fixation de session (pas de régénération d'ID) | tout le dépôt / `Git/index.php:2` | **Haute** | Confirmée | IA, vérifiée manuellement |
+| AUTH-05 | Sortie parasite avant `<?php` → `headers already sent` | `Git/html_spe_char.php:1` | Moyenne | Confirmée | IA, vérifiée manuellement |
+| AUTH-02 | Cookie de session sans HttpOnly/Secure/SameSite | `Git/index.php:2` | Moyenne | Confirmée | IA, vérifiée manuellement |
+| XSS-01 | `h()` laisse passer les URL `javascript:` | `Git/html_spe_char.php:5` | Moyenne | Confirmée | Étudiant |
+| AUTH-03 | CSRF non centralisé + pas de garde dans le routeur | `Git/index.php`, `docs/API.md` | Moyenne | Confirmée | IA, vérifiée manuellement |
+| INJ-01 | DSN sans `charset` et aucune option PDO de sécurité | `Git/utils/connexion.php:9` | Faible | Confirmée | IA, vérifiée manuellement |
+| INJ-02 | Injection SQL directe dans le socle | socle | — | Faux positif écarté | IA |
+| FIL-01 | Traversée / inclusion via `?module=` | `Git/index.php:18` | — | Non confirmée (routeur en liste blanche) | IA |
 
-Les autres domaines n'ont pas été lus. Pour les interactions, on s'appuie sur le contrat `docs/API.md`. On a aussi consulté `composer.json`, `.gitignore`, `.env.example` et l'historique Git des fichiers du socle. Quelques recherches par mots-clés ont été faites sur tout le dépôt pour mesurer l'impact des fonctions du socle, sans lire les autres modules.
-Les constats situés hors du socle sont regroupés dans une section dédiée, à confier aux domaines concernés.
-
-## Méthode
-
-Sept passes indépendantes ont été faites, une par catégorie de faille :
-
-1. Injections (SQL, commandes, templates)
-2. XSS
-3. Authentification et sessions
-4. Contrôle d'accès et IDOR
-5. Secrets, configuration, debug et CORS
-6. Dépendances
-7. Téléversements de fichiers et traversées de répertoires
-
-Chaque passe combine lecture du code, recherche de motifs dangereux (`eval`, `exec`, `system`, `unserialize`, `header(`, `ini_set`, etc.) et vérification dans l'historique Git.
-
-Gravités : **Critique** / **Élevée** / **Moyenne** / **Faible** / **Info**.
-
-## Synthèse
-
-| ID | Catégorie | Gravité | Fichier | Constat |
-|---|---|---|---|---|
-| SEC-01 | Secrets | **Critique** | `utils/connexion.php:9,11` + historique | Identifiants de base de données en clair, 3 jeux distincts dans l'historique |
-| SEC-02 | Debug | Moyenne | `utils/connexion.php:9` | Exception PDO non capturée : le mot de passe peut fuiter dans la trace |
-| SEC-03 | Configuration | Faible | `index.php` | Aucune gestion dev/prod, `display_errors` laissé au `php.ini` |
-| SEC-04 | En-têtes / CORS | Faible | `index.php` | Pas de CORS (conforme), mais aucun en-tête de sécurité (clickjacking) |
-| AUTH-01 | Sessions | **Élevée** | `index.php:2` (+ tout le dépôt) | Aucun `session_regenerate_id` et pas de mode strict : fixation de session |
-| AUTH-02 | Sessions | Moyenne | `index.php:2` | Cookie de session sans `HttpOnly`, `Secure` ni `SameSite` explicites |
-| AUTH-03 | CSRF | Moyenne | `index.php`, `utils/token_csrf.php` | Vérification CSRF non centralisée, oubliée dans plusieurs modules |
-| AUTH-04 | CSRF | Faible | `utils/token_csrf.php:7`, `index.php:10` | Comparaison non constante et jeton non renouvelé à la connexion |
-| AUTH-05 | Sessions | Moyenne | `html_spe_char.php:1` | Saut de ligne avant `<?php` : les `header()` échouent (redirections) |
-| AUTH-06 | Sessions | Faible | `index.php` | Aucune expiration de session par inactivité |
-| ACC-01 | Contrôle d'accès | Moyenne | `index.php:18-68` | Aucune garde centrale d'authentification ni de rôle dans le routeur |
-| ACC-02 | IDOR | Moyenne | socle (absence) | Aucun mécanisme de cloisonnement par association ou par compte |
-| ACC-03 | Contrôle d'accès | Faible | socle (convention) | Refus renvoyé en HTTP 200 au lieu de 403 |
-| INJ-01 | Injection SQL | Faible | `utils/connexion.php:9` | DSN sans `charset`, requêtes préparées émulées par défaut |
-| INJ-02 | Injections | Info | socle | Aucune requête, commande système ni moteur de template dans le socle |
-| XSS-01 | XSS | Faible | `html_spe_char.php:5-7` | `h()` correct pour le HTML, insuffisant pour les contextes JS et URL |
-| XSS-02 | XSS | Faible | `index.php` | Pas de Content-Security-Policy (aucune défense en profondeur) |
-| DEP-01 | Dépendances | Moyenne | `composer.json` | `php >=8.0` autorise des versions PHP en fin de support |
-| DEP-02 | Dépendances | Moyenne | racine | Pas de `composer.lock` : versions non figées, `composer audit` impossible |
-| DEP-03 | Dépendances | Faible | `composer.json` | PHPUnit `^9.6`, branche ancienne (dépendance de dev uniquement) |
-| FIL-01 | Traversée | Info | `index.php:18-68` | Routeur en liste blanche : pas d'inclusion de fichier arbitraire |
-| FIL-02 | Traversée | Faible | `index.php`, `composant_menu/*` | `include` en chemins relatifs résolus via `include_path` |
-| FIL-03 | Téléversement | Info | socle (absence) | Aucun utilitaire commun de validation des fichiers téléversés |
+Cinq failles confirmées au minimum sont exigées, dont deux critiques/hautes : ce rapport en confirme sept, dont **SEC-01 (critique)** et **AUTH-01 (haute)**.
 
 ---
 
-## 1. Injections SQL, de commandes système et de templates
+## SEC-01 — Identifiants de base de données en clair (Critique, Confirmée)
+**Localisation** : `Git/utils/connexion.php:9` (ligne active) et l'historique Git.
+**Gravité — justification** : accès direct en lecture/écriture à la base de production d'un dépôt public ; secret directement exploitable, sans condition. Trois jeux d'identifiants distincts, dont un hébergeur tiers.
+**Auteur** : signalée par l'IA, confirmée manuellement sur GitHub et par script.
 
-### INJ-02 — Aucune injection directe dans le socle (Info)
-Le socle n'exécute aucune requête SQL : `Connexion` ne fait qu'ouvrir la connexion PDO. On n'y trouve aucun appel à `exec`, `system`, `shell_exec`, `passthru`, `popen`, `proc_open`, `eval`, `unserialize` ou `extract`, ni de variable variable. Il n'y a pas non plus de moteur de template : les vues sont du PHP inclus. Le seul point d'entrée contrôlé par l'utilisateur est `$_GET['module']` (`index.php:18`), comparé à une liste fermée de `case` et jamais concaténé à un chemin ou à une requête.
+Preuve (extrait, mots de passe masqués dans ce rapport, complets dans la sortie du TP) :
+```
+--- fichier courant (ligne active) ---
+9: self::$bdd = new PDO($dsn='mysql:host=database-etudiants.iut.univ-paris8.fr;
+   dbname=dutinfopw201699',$user='dutinfopw201699',$password='juh*****');
+--- jeux d'identifiants distincts dans TOUT l'historique ---
+dbname=4724048_jj',$user='4724048_jj',$password='Ste*****'        (hébergeur awardspace)
+dbname=dutinfopw20167',$user='dutinfopw20167',$password='dys*****'
+dbname=dutinfopw201699',$user='dutinfopw201699',$password='juh*****'
+--- nombre de commits contenant un mot de passe en clair ---
+47
+```
+**Test de non-régression** : `testSec01AucunSecretEnClair` — échoue tant qu'un `$password='...'` figure dans le fichier.
+**Correctif attendu** : changer les trois mots de passe (déjà compromis), lire les identifiants depuis `.env`, réécrire l'historique.
 
-### INJ-01 — Connexion PDO sans jeu de caractères ni préparation native (Faible)
-`utils/connexion.php:9` : le DSN actif ne précise pas `charset` (les lignes commentées 18 et 21 le faisaient). Or PDO MySQL émule les requêtes préparées par défaut (`ATTR_EMULATE_PREPARES = true`). Dans ce cas, l'échappement se fait côté client selon le jeu de caractères de la connexion. Avec un jeu multioctet comme GBK ou SJIS, des contournements d'échappement sont connus. Le risque est théorique avec un serveur en UTF-8, mais la protection des modèles contre l'injection dépend entièrement de ce réglage.
-**Recommandation** : ajouter `charset=utf8mb4` au DSN et fixer `PDO::ATTR_EMULATE_PREPARES => false` et `PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION` explicitement.
+## AUTH-01 — Fixation de session (Haute, Confirmée)
+**Localisation** : aucun `session_regenerate_id()` dans le dépôt ; `session_start()` en `Git/index.php:2`.
+**Gravité — justification** : un attaquant qui impose un identifiant de session à la victime conserve la session après connexion, avec le rôle obtenu (jusqu'à super-admin) ; vol de session complet.
+**Auteur** : signalée par l'IA, confirmée manuellement par démonstration exécutable.
 
-## 2. XSS
+Preuve :
+```
+--- occurrences de session_regenerate_id dans TOUT le depot ---
+0
+--- session.use_strict_mode est-il active par le code ? ---
+ -> jamais defini (defaut PHP = 0, desactive)
+--- demonstration : l'ID de session ne change pas apres 'connexion' ---
+ID avant connexion : IDFIXEPARATTAQUANT
+ID apres connexion : IDFIXEPARATTAQUANT
+RESULTAT: ID inchange -> session fixee par lattaquant conserve la session admin
+```
+**Test de non-régression** : `testAuth01RegenerationSession` — échoue tant que `session_regenerate_id` est absent.
+**Correctif attendu** : activer `session.use_strict_mode` et régénérer l'ID + le jeton CSRF à chaque connexion/changement de rôle.
 
-### XSS-01 — Portée limitée de `h()` (Faible)
-`html_spe_char.php:5-7` : `htmlspecialchars(..., ENT_QUOTES, 'UTF-8')` est correct pour le texte HTML et les attributs **entre guillemets**. Il ne protège pas :
-- l'intérieur d'un `<script>` ou d'un gestionnaire `on*=` ;
-- les attributs non entre guillemets ;
-- les URL : un `href="<?= h($url) ?>"` accepte `javascript:alert(1)`.
+## AUTH-05 — Sortie parasite avant `<?php` (Moyenne, Confirmée)
+**Localisation** : `Git/html_spe_char.php:1` (un `\n` avant la balise), inclus par `Git/index.php:5`.
+**Gravité — justification** : casse tous les `header()` (16 appels dans le dépôt), donc les redirections et tout futur en-tête de sécurité ou régénération de session ; prérequis bloquant pour AUTH-01, AUTH-02 et les en-têtes.
+**Auteur** : signalée par l'IA, confirmée manuellement.
 
-Le contrat (`docs/API.md`) impose `h()` partout sans préciser ces limites.
-**Recommandation** : documenter les contextes couverts par `h()`. Ajouter au socle des helpers dédiés, par exemple `js()` à base de `json_encode` avec les options `JSON_HEX_*`, et un validateur d'URL qui n'accepte que `http`/`https`.
+Preuve :
+```
+--- premiers octets de html_spe_char.php (od) ---
+0000000  \n   <   ?   p   h   p  \n  ...
+--- inclusion puis header() ---
+ERREUR PHP CAPTUREE: Cannot modify header information - headers already sent
+   by (output started at /tmp/proof/Git/html_spe_char.php:1)
+headers_sent() = true -> sortie deja envoyee depuis .../html_spe_char.php ligne 1
+```
+**Test de non-régression** : `testAuth05PasDeSortieAvantPhp` — échoue tant que le fichier ne commence pas par `<?php`.
+**Correctif attendu** : supprimer la ligne vide initiale et la balise fermante `?>`.
 
-### XSS-02 — Absence de Content-Security-Policy (Faible)
-Aucun en-tête CSP n'est envoyé. Une XSS dans n'importe quelle vue s'exécute donc sans restriction, et le cookie de session est lisible en JavaScript (voir AUTH-02).
-**Recommandation** : envoyer une CSP depuis le socle, au minimum `default-src 'self'` avec le CDN Bootstrap autorisé et `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`.
+## AUTH-02 — Cookie de session sans HttpOnly/Secure/SameSite (Moyenne, Confirmée)
+**Localisation** : `Git/index.php:2` (`session_start()` sans configuration de cookie).
+**Gravité — justification** : cookie de session volable par XSS (pas de HttpOnly), envoyé en clair (pas de Secure), transmis en intersite (pas de SameSite), ce qui aggrave AUTH-03.
+**Auteur** : signalée par l'IA, confirmée manuellement.
 
-Point vérifié : le message du cas par défaut du routeur (`index.php:66`) est statique et ne reflète pas la valeur de `module`. Il n'y a pas de XSS réfléchie à cet endroit.
+Preuve :
+```
+--- session_set_cookie_params / ini_set(session.cookie_*) dans index.php ? ---
+ -> jamais appele : les valeurs par defaut de php.ini s'appliquent
+--- valeurs par defaut effectives (aucun reglage) ---
+httponly=false  secure=false  samesite=""
+```
+**Correctif attendu** : `session_set_cookie_params(['httponly'=>true,'secure'=>true,'samesite'=>'Lax'])` avant `session_start()`.
 
-## 3. Authentification et sessions
+## XSS-01 — `h()` laisse passer les URL `javascript:` (Moyenne, Confirmée)
+**Localisation** : `Git/html_spe_char.php:5-7`.
+**Gravité — justification** : `h()` protège le texte HTML mais pas le contexte URL ; un attribut `href`/`src` construit avec `h()` accepte `javascript:` et exécute du script au clic. Le contrat impose `h()` « partout » sans signaler cette limite.
+**Auteur** : trouvée par l'étudiant (revue du helper), confirmée par script.
 
-### AUTH-01 — Fixation de session (Élevée)
-Aucun appel à `session_regenerate_id()` n'existe dans le dépôt (0 occurrence), et `session.use_strict_mode` n'est pas activé (défaut PHP : désactivé). PHP accepte donc un identifiant de session choisi par un attaquant. Le scénario est le suivant :
-1. L'attaquant impose un identifiant à la victime.
-2. La victime se connecte avec cet identifiant.
-3. L'attaquant réutilise l'identifiant et hérite de la session authentifiée, y compris de son rôle.
+Preuve :
+```
+entree : javascript:alert(document.cookie)
+h() -> : javascript:alert(document.cookie)
+HTML genere : <a href="javascript:alert(document.cookie)">lien</a>
+RESULTAT: identique -> href javascript: passe intact -> XSS possible au clic
+```
+**Test de non-régression** : `testXss01HelperUrlSure` — échoue tant qu'aucun helper d'URL sûre n'existe.
+**Correctif attendu** : helper `url()` qui n'autorise que les schémas `http`/`https`, à imposer dans le contrat pour les attributs d'URL.
 
-L'aggravation vient du jeton CSRF : il est créé avant la connexion (`index.php:10-12`) et conservé après. L'attaquant connaît donc aussi ce jeton.
-**Recommandation** : le socle doit activer `session.use_strict_mode` et fournir une fonction commune à appeler à chaque changement de privilège : connexion, choix d'association, changement de rôle, déconnexion. Cette fonction régénère l'identifiant (`session_regenerate_id(true)`) et le jeton CSRF. Son appel à la connexion relève du domaine « Comptes ».
+## AUTH-03 — CSRF non centralisé, pas de garde dans le routeur (Moyenne, Confirmée)
+**Localisation** : `Git/index.php:18-68` ; écarts recensés dans `docs/API.md`.
+**Gravité — justification** : la vérification CSRF et le contrôle de rôle dépendent de chaque module ; le routeur ne fait aucune garde, ce qui a déjà produit des oublis documentés (module `stock`, `restock/ajoutAchat`, `commande/annulation` en GET, `restock/afficherAchats`/`detailsAchat` sans rôle).
+**Auteur** : signalée par l'IA, confirmée manuellement.
 
-### AUTH-02 — Paramètres du cookie de session non définis (Moyenne)
-`index.php:2` : `session_start()` est appelé sans `session_set_cookie_params()` ni `ini_set()`. Avec les valeurs par défaut de PHP, le cookie `PHPSESSID` est sans `HttpOnly` (volable par XSS), sans `Secure` (envoyé en HTTP clair) et sans `SameSite` (envoyé dans les requêtes intersites, ce qui aggrave les CSRF en GET).
-**Recommandation** : avant `session_start()`, définir `httponly => true`, `secure => true` en production, `samesite => 'Lax'` (ou `'Strict'`) et `path => '/'`.
+Preuve :
+```
+--- index.php verifie-t-il CSRF ou role avant de charger un module ? ---
+ -> le routeur ne verifie NI le CSRF NI le role
+--- ecarts deja documentes dans docs/API.md ---
+| annulation | GET | idCommande | non contrôlé | Annule la commande |
+| afficherAchats | GET | — | non contrôlé | Liste des achats |
+- Aucun contrôle CSRF sur le module stock ni sur restock/ajoutAchat.
+```
+**Correctif attendu** : garde centrale dans `index.php` (POST → CSRF obligatoire, table module→rôle, `http_response_code(403)`).
 
-### AUTH-03 — Protection CSRF non centralisée (Moyenne)
-`Token_CSRF::check_csrf()` n'est appelé que dans 6 fichiers. Chaque action doit y penser elle-même, et `docs/API.md` recense déjà des oublis : tout le module `stock`, `restock/ajoutAchat`, ainsi que `commande/annulation` et `deconnexion` qui modifient l'état en GET. Le routeur a pourtant l'emplacement idéal pour une vérification unique.
-**Recommandation** : dans `index.php`, refuser toute requête `POST` dont le jeton est invalide avant de charger le module. Interdire aussi les changements d'état en GET, ce qui relève des domaines concernés.
+## INJ-01 — DSN sans `charset` et aucune option PDO de sécurité (Faible, Confirmée)
+**Localisation** : `Git/utils/connexion.php:9`.
+**Gravité — justification** : sans `charset` fixé et sans `ATTR_EMULATE_PREPARES=false`, la protection contre l'injection repose sur le jeu de caractères par défaut du serveur ; risque de contournement d'échappement avec un jeu multioctet. Impact conditionnel, d'où « Faible ».
+**Auteur** : signalée par l'IA, confirmée manuellement.
+**Note d'honnêteté** : la conséquence « prepares émulées » est un comportement MySQL documenté et **n'a pas pu être exécutée** dans le TP (pas de serveur MySQL ; le pilote SQLite témoin ne supporte pas cet attribut). Seule la partie vérifiable a été prouvée : absence de `charset` et de toute option de sécurité sur la ligne active.
 
-### AUTH-04 — Détails d'implémentation du jeton CSRF (Faible)
-- `utils/token_csrf.php:7` : la comparaison `!==` n'est pas à temps constant. Il faut préférer `hash_equals($_SESSION['token'], $_POST['token_csrf'])` après avoir vérifié que les deux sont des chaînes.
-- Si `check_csrf()` est appelé hors du routeur, `$_SESSION['token']` peut être indéfini (avertissement PHP). Il faut le tester avec `isset`.
-- Le jeton n'est jamais renouvelé, en particulier pas à la connexion (voir AUTH-01).
-
-La génération reste correcte : `random_bytes(32)` produit 256 bits d'entropie.
-
-### AUTH-05 — Sortie parasite avant les en-têtes (Moyenne)
-`html_spe_char.php:1` : la ligne vide avant `<?php` est envoyée au navigateur dès l'inclusion (`index.php:5`). Sans `output_buffering` dans `php.ini`, tous les `header()` suivants échouent avec « headers already sent » : 16 appels à `header(` dans le dépôt. Il en va de même pour tout futur `session_regenerate_id()` et tout en-tête de sécurité (AUTH-01, AUTH-02, XSS-02, SEC-04). Si une action compte sur une redirection pour arrêter le traitement sans appeler `exit`, l'exécution continue.
-**Recommandation** : supprimer la ligne vide et la balise fermante `?>` des fichiers purement PHP du socle. Ajouter un test qui vérifie qu'aucun octet n'est émis à l'inclusion.
-
-### AUTH-06 — Pas d'expiration de session (Faible)
-Aucune durée d'inactivité ni durée de vie absolue n'est gérée : une session barman ou gestionnaire laissée ouverte sur un poste partagé reste valable indéfiniment.
-**Recommandation** : stocker l'horodatage de la dernière activité en session et détruire la session au-delà d'un seuil, par exemple 30 minutes.
-
-## 4. Contrôle d'accès et IDOR
-
-### ACC-01 — Aucune garde centrale dans le routeur (Moyenne)
-`index.php:18-68` charge n'importe quel module, sans exiger ni session connectée ni rôle. Toute la sécurité repose sur les vérifications faites action par action. `docs/API.md` montre que ce modèle produit déjà des oublis : `commande/annulation`, `restock/afficherAchats` et `restock/detailsAchat` sont signalés « non contrôlé ».
-**Recommandation** : ajouter au socle une table indiquant pour chaque module s'il est public ou réservé aux sessions connectées, plus un helper du type `exigerRole([1, 4])` qui arrête le traitement (`exit`) en cas de refus. Refuser par défaut tout ce qui n'est pas déclaré.
-
-### ACC-02 — Aucun cloisonnement par association ou par compte : IDOR probables (Moyenne)
-Plusieurs actions prennent un identifiant fourni par le client, comme `idCommande`, `idAchat`, `idProd` ou `fournisseur` (voir `docs/API.md`). Le socle ne fournit aucun outil pour vérifier que l'objet visé appartient à l'association (`$_SESSION['idAsso']`) ou au compte (`$_SESSION['idCompte']`) de la session. Par exemple, `historique/detailHistoClient?idCommande=` est ouvert aux rôles 1, 2 et 3, et le contrat ne précise aucune vérification de propriétaire. Un client pourrait donc lire la commande d'un autre client en changeant l'identifiant. Ce point n'a **pas été vérifié** dans le code, qui est hors périmètre.
-**Recommandation** : ajouter au socle un helper de vérification d'appartenance, puis faire auditer chaque action à identifiant par les domaines Back concernés (voir la section « Hors périmètre »).
-
-### ACC-03 — Refus sans code HTTP 403 (Faible)
-Les refus sont affichés comme un message dans une page servie en HTTP 200. Il n'y a pas d'impact direct, mais cela empêche de repérer les tentatives dans les journaux et cela brouille les tests automatisés.
-**Recommandation** : envoyer `http_response_code(403)` dans le helper de refus proposé en ACC-01.
-
-## 5. Secrets, configuration, mode debug et CORS
-
-### SEC-01 — Identifiants de base de données dans le code et l'historique (Critique)
-- `utils/connexion.php:9` (ligne active) : hôte `database-etudiants.iut.univ-paris8.fr`, utilisateur `dutinfopw201699`, mot de passe `juh*****` en clair.
-- `utils/connexion.php:11` (commentée) : un second compte, `dutinfopw20167`, mot de passe `dys*****`.
-- L'historique Git (145 commits) contient en plus un troisième jeu d'identifiants, pour un hébergeur tiers : `fdb1033.awardspace.net`, utilisateur `4724048_jj`, mot de passe `Ste*****`.
-
-Le dépôt est public : ces trois jeux sont à considérer comme **compromis**. Supprimer les lignes du fichier ne suffit pas, puisqu'elles restent dans l'historique. Le fichier `.env.example` existe mais n'est pas lu par le code.
-**Recommandation, par ordre** :
-1. Changer immédiatement les trois mots de passe auprès de l'IUT et de l'hébergeur, et vérifier que ce mot de passe n'est pas réutilisé ailleurs.
-2. Faire lire les identifiants par `Connexion` depuis `.env` (déjà ignoré par Git) ou depuis des variables d'environnement.
-3. Réécrire l'historique (`git filter-repo`) si possible.
-4. Ajouter un outil de détection de secrets (gitleaks, par exemple) avant chaque commit.
-
-Le test `ProjetTest` qui fige cette dette devra être mis à jour dans la même PR.
-
-### SEC-02 — Fuite possible des identifiants dans les traces d'erreur (Moyenne)
-`utils/connexion.php:9` : l'appel `new PDO(...)` n'est entouré d'aucun `try/catch`. En cas d'échec (base indisponible, par exemple), la `PDOException` n'est pas capturée. Avec `display_errors=On` et `zend.exception_ignore_args=Off`, qui sont les réglages de `php.ini-development`, la trace affichée contient les arguments du constructeur : DSN, utilisateur **et mot de passe**. La connexion est ouverte dès l'inclusion des modèles, donc sur presque toutes les pages.
-**Recommandation** : capturer l'exception, journaliser un message neutre et afficher une page d'erreur générique. Désactiver `display_errors` en production.
-
-### SEC-03 — Pas de distinction entre développement et production (Faible)
-La variable `APP_ENV` de `.env.example` n'est lue nulle part, et le socle ne règle ni `display_errors` ni `error_reporting` ni `log_errors`. Le comportement dépend donc entièrement du `php.ini` du serveur. Par exemple, en cas de module inconnu (`index.php:65-67`), `$moduleContent` n'est jamais défini et `template.php:82` l'affiche : cela produit un avertissement « Undefined variable » qui révèle le chemin des fichiers si l'affichage des erreurs est actif.
-**Recommandation** : lire `APP_ENV` dans le socle, désactiver l'affichage des erreurs hors développement et initialiser `$moduleContent`.
-
-### SEC-04 — CORS et en-têtes de sécurité (Faible)
-- **CORS** : aucun en-tête `Access-Control-*` n'est envoyé, donc la politique same-origin du navigateur s'applique. Ce comportement est **conforme** pour une application sans API.
-- **En-têtes absents** : `X-Frame-Options` / `frame-ancestors` (l'application peut être affichée dans un cadre, d'où un risque de clickjacking sur les boutons de commande ou de promotion), `X-Content-Type-Options: nosniff`, `Referrer-Policy`, et `Strict-Transport-Security` en HTTPS.
-
-**Recommandation** : envoyer ces en-têtes depuis `index.php`. Cela suppose d'avoir d'abord corrigé AUTH-05.
-
-## 6. Dépendances vulnérables ou obsolètes
-
-### DEP-01 — Versions PHP en fin de support autorisées (Moyenne)
-`composer.json` déclare `"php": ">=8.0"`. PHP 8.0 ne reçoit plus de correctifs de sécurité depuis novembre 2023, et PHP 8.1 depuis fin 2025. Déployer sur ces versions serait donc accepté sans alerte. L'environnement vérifié dans `CLAUDE.md` (PHP 8.3.6 packagé par Ubuntu) est, lui, dans une branche maintenue.
-**Recommandation** : relever la contrainte à `>=8.3` et l'indiquer dans `CLAUDE.md`. Vérifier les dates exactes sur php.net/supported-versions, car ce calendrier évolue.
-
-### DEP-02 — Pas de fichier de verrouillage (Moyenne)
-Aucun `composer.lock` n'est versionné, faute d'accès à Packagist selon `CLAUDE.md`. Les versions installées ne sont donc ni reproductibles ni auditables, et `composer audit` ne peut pas s'exécuter.
-**Recommandation** : générer et versionner `composer.lock` depuis un poste avec accès réseau, puis lancer `composer audit` en intégration continue. Ce changement de dépendance doit être expliqué dans la PR, conformément aux règles du dépôt.
-
-### DEP-03 — PHPUnit 9 (Faible)
-`"phpunit/phpunit": "^9.6"` correspond à une branche ancienne, alors que des versions majeures plus récentes existent. L'installation décrite dans `CLAUDE.md` (paquet Ubuntu 9.6.17) est aussi figée à une version mineure ancienne. Des avis de sécurité ont été publiés sur PHPUnit ces dernières années : il faut le vérifier avec `composer audit`, ce rapport n'ayant pas pu interroger la base d'avis. L'impact reste limité, car PHPUnit n'est qu'une dépendance de développement, non déployée.
-**Recommandation** : exiger au minimum la dernière 9.6.x corrigée, ou migrer vers une branche maintenue compatible avec la version de PHP retenue.
-
-Remarque : le socle ne charge lui-même aucune bibliothèque externe. Bootstrap est chargé par CDN dans `template.php`, qui relève du domaine Front (voir « Hors périmètre »).
-
-## 7. Téléversements de fichiers et traversées de répertoires
-
-### FIL-01 — Routeur en liste blanche (Info, conforme)
-`index.php:18-68` : la valeur de `?module=` n'est jamais utilisée pour construire un chemin, elle est seulement comparée à des `case` littéraux. Une valeur comme `../../etc/passwd` ou `php://filter` aboutit au cas par défaut. Aucune inclusion de fichier locale ou distante n'est possible par ce paramètre.
-
-### FIL-02 — `include` en chemins relatifs (Faible)
-`index.php:5-6, 21-62`, `composant_menu.php:2` et `controleur_menu.php:2` utilisent des chemins relatifs sans `./` ni `__DIR__`. PHP les résout via `include_path`, puis via le dossier courant. Les tests exploitent d'ailleurs ce comportement pour substituer `utils/connexion.php`. Ce n'est pas contrôlable par un attaquant, mais un `include_path` mal configuré sur le serveur pourrait charger un autre fichier du même nom.
-**Recommandation** : utiliser `__DIR__ . '/…'`, tout en gardant un moyen explicite d'injecter le stub de test.
-
-### FIL-03 — Aucun utilitaire commun pour les téléversements (Info)
-Le socle ne traite aucun fichier, mais il ne fournit pas non plus de fonction commune de validation des fichiers téléversés : type MIME réel via `finfo`, liste blanche d'extensions, taille maximale, nom de fichier régénéré, `is_uploaded_file`, dossier hors de la racine web. Chaque module doit donc tout réimplémenter (voir « Hors périmètre »).
+Preuve :
+```
+occurrences de charset sur la ligne active : 0
+le code ne fixe jamais EMULATE_PREPARES ni ERRMODE ni setAttribute
+ -> aucune de ces options n'est definie
+```
+**Test de non-régression** : `testInj01DsnCharset` — échoue tant que le DSN actif n'a pas de `charset`. (Le test ignore correctement les lignes commentées : un premier jet le passait à tort, corrigé.)
 
 ---
 
-## Hors périmètre : à transmettre aux autres domaines
+## Failles écartées
 
-Ces points ont été repérés via `docs/API.md`, `.gitignore` ou l'arborescence, sans lire le code des autres domaines.
+### INJ-02 — Injection SQL directe dans le socle (Faux positif)
+Une lecture rapide pourrait suspecter le paramètre `?module=`. Vérifié : le socle n'exécute aucune requête SQL, et `?module=` est comparé à une liste fermée de `case`, jamais concaténé. **Écartée.**
 
-| Domaine | Constat | Gravité estimée |
-|---|---|---|
-| Back Comptes | `ajout_association` téléverse un logo et des documents légaux stockés dans `Git/docsLegaux/`, **sous la racine web** (`php -S … -t Git`), sans `.htaccess` ni configuration interdisant l'exécution. Si l'extension n'est pas filtrée, un fichier `.php` téléversé serait exécuté (exécution de code à distance). À auditer en priorité. | Élevée (à confirmer) |
-| Back Comptes | 3 PDF de `Git/docsLegaux/` sont versionnés dans ce dépôt public malgré la règle `.gitignore` (ajoutée après coup). Ils peuvent contenir des données personnelles. | Moyenne |
-| Back Comptes | `choisirAsso` accorde le rôle 4 (super-admin) à tout compte dont le login est `admin` (`docs/API.md`) : quiconque crée ce login en premier devient super-admin. | Élevée |
-| Back Comptes | La connexion doit appeler la régénération de session prévue en AUTH-01. `deconnexion` se fait en GET. | Moyenne |
-| Back Commande / Suivi | Actions à identifiant (`idCommande`, `idAchat`, `idProd`) à auditer pour les IDOR (ACC-02). `annulation` modifie des données en GET sans rôle ni CSRF. | Moyenne |
-| Back Commande | Module `stock` et `restock/ajoutAchat` sans CSRF ; `afficherAchats` et `detailsAchat` sans contrôle de rôle. | Moyenne |
-| Back Comptes | Montant de rechargement du solde borné (10–100) uniquement dans le HTML, pas côté serveur (`CLAUDE.md`). | Moyenne |
-| Front Gabarit | Bootstrap 5.3 et Bootstrap Icons chargés par CDN : vérifier que la version est à jour et que l'attribut `integrity` (SRI) et `crossorigin` sont présents. | Faible |
+### FIL-01 — Traversée de répertoires via `?module=` (Non confirmée)
+Hypothèse testée : `?module=../../etc/passwd` provoquerait une inclusion arbitraire. Vérifié sur `Git/index.php:18-68` : la valeur n'est jamais utilisée pour bâtir un chemin ; toute valeur inconnue tombe sur le `default`. Pas d'inclusion contrôlable. **Non confirmée** (comportement sain). Un durcissement mineur reste possible (`__DIR__` sur les `include`), sans impact de sécurité démontré.
 
-## Ordre de correction proposé
+---
 
-Une PR par point, dans le domaine Socle, chacune accompagnée d'un test qui échoue avant le correctif :
+## Reproduire les preuves dans le TP
+```
+git clone https://github.com/DenisZAPOI/SAE_DEV_DUPUIS_ZAPOI_CAI.git && cd SAE_DEV_DUPUIS_ZAPOI_CAI
+git checkout origin/tests/non-regression-audit -- tests/AuditSecuriteTest.php
+phpunit --testdox tests/AuditSecuriteTest.php
+```
+Sortie obtenue avant tout correctif (état RED de la non-régression), le 30/09/2026 :
+```
+ ✘ Sec 01 aucun secret en clair
+ ✘ Auth 05 pas de sortie avant php
+ ✘ Auth 01 regeneration session
+ ✘ Inj 01 dsn charset
+ ✘ Xss 01 helper url sure
+Tests: 5, Assertions: 5, Failures: 5.
+```
+La suite existante reste intacte : `phpunit` complet donne `Tests: 42, Failures: 5` (37 tests d'origine verts + 5 tests d'audit rouges).
 
-1. **SEC-01** : changer les mots de passe (sans attendre la PR), puis externaliser les identifiants.
-2. **AUTH-05** : supprimer la sortie parasite, prérequis de tous les correctifs à base d'en-têtes.
-3. **AUTH-01 + AUTH-04** : mode strict, fonction de régénération de session et de jeton, `hash_equals`.
-4. **AUTH-02, SEC-04, XSS-02** : paramètres du cookie et en-têtes de sécurité.
-5. **ACC-01, ACC-03, AUTH-03** : garde centrale (authentification, rôle, CSRF sur tout POST, code 403).
-6. **SEC-02, SEC-03, INJ-01** : configuration PDO, gestion des erreurs, `APP_ENV`.
-7. **DEP-01 à DEP-03** : contrainte PHP, `composer.lock`, `composer audit`.
-8. **ACC-02, FIL-02, FIL-03, XSS-01, AUTH-06** : helpers d'appartenance, d'upload et d'échappement contextuel, expiration de session.
+---
+
+## Retour critique
+
+**Faux positifs produits par l'IA.** Deux points annoncés au premier tour ne tiennent pas après vérification. INJ-02 (injection SQL dans le socle) : aucune requête n'y est exécutée, l'alerte venait d'une association trop rapide « paramètre utilisateur = danger ». FIL-01 (traversée via `?module=`) : le routeur est en liste blanche, l'inclusion arbitraire est impossible. Un troisième point, INJ-01, était partiellement surévalué : la partie « prepares émulées » n'est pas exécutable ici et a été requalifiée en fait documenté, non en preuve. Cela confirme la consigne : une alerte d'IA n'est retenue qu'après lecture du code et exécution d'une preuve. Mon propre test a d'ailleurs produit un faux négatif (INJ-01 passait à cause des lignes commentées) : sans relecture de la sortie, j'aurais validé un test qui ne prouvait rien.
+
+**Faille trouvée par l'étudiant.** XSS-01 vient d'une revue manuelle du helper `h()`, pas d'une alerte d'IA : en testant `h('javascript:alert(1)')`, on constate que la chaîne ressort intacte. L'IA traitait `h()` comme « la » protection XSS ; c'est l'inspection du contexte URL, absent de son raisonnement initial, qui a révélé le trou.
+
+**Prompt le plus utile.** « Pour chaque faille, lis le code incriminé puis écris un script/test qui la démontre, exécute-le et garde la sortie ; classe ensuite en confirmée / non confirmée / faux positif. » Ce prompt a été le plus rentable : il a transformé une liste d'hypothèses en constats prouvés, éliminé deux faux positifs et un tiers surévalué, et produit directement les tests de non-régression réutilisables.
