@@ -21,4 +21,22 @@ class AuditSecuriteTest extends TestCase
             "SEC-01 : un mot de passe est écrit en clair dans connexion.php"
         );
     }
+
+    /** AUTH-01 : le socle doit régénérer l'ID de session au moins une fois */
+    public function testAuth01RegenerationSession(): void
+    {
+        $trouve = 0;
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($this->git()));
+        foreach ($it as $f) {
+            if ($f->getExtension() === 'php'
+                && strpos(file_get_contents($f->getPathname()), 'session_regenerate_id') !== false) {
+                $trouve++;
+            }
+        }
+        $this->assertGreaterThan(
+            0,
+            $trouve,
+            "AUTH-01 : session_regenerate_id() n'est appelé nulle part (fixation de session)"
+        );
+    }
 }
