@@ -16,6 +16,7 @@ historique, récapitulatif de la journée, gestion du staff.
 - `modules/module_<nom>/` : un module MVC = `module_`, `controleur_`, `modele_`, `vue_<nom>.php`.
 - `utils/` : `Connexion` (PDO), `Token_CSRF`, `VueGenerique` ; `html_spe_char.php` : helper `h()`.
 - `docs/API.md` : contrat entre vues et contrôleurs (routes, champs, rôles).
+- `tests/` : tests PHPUnit ; `.env.example` : variables attendues ; `.gitignore` : exclusions (secrets, vendor, logs, dumps).
 
 ## Domaines (un domaine = front OU back, jamais les deux)
 Chemins relatifs à `Git/`. Un module contient du front (`vue_*`) et du back (`module_*`, `controleur_*`, `modele_*`).
@@ -40,10 +41,29 @@ Chemins relatifs à `Git/`. Un module contient du front (`vue_*`) et du back (`m
   hors code, `docsLegaux/`, `.idea/`).
 
 ## Installation, lancement, tests
-- Prérequis : PHP ≥ 8 avec `pdo_mysql`, MySQL/MariaDB. Créer la base, puis régler l'accès dans `Git/utils/connexion.php`.
-- Lancer : `php -S localhost:8000 -t Git`, puis http://localhost:8000/index.php (ou XAMPP/WAMP).
-- Tests : pas de framework. Vérification syntaxique `find Git -name '*.php' -exec php -l {} \;`, tests dans `tests/`
-  quand ils existent, puis parcours manuel avec un compte par rôle.
+Vérifié le 30/09/2026 sur Ubuntu 24.04 (PHP 8.3.6, PHPUnit 9.6.17).
+- Installer : `apt-get install -y php-cli php-sqlite3 php-mbstring php-xml phpunit`
+  (ou `composer install` si Packagist est accessible : `composer.json` déclare `phpunit/phpunit ^9.6`).
+- Configurer : copier `.env.example` en `.env` ; le code lit encore les identifiants dans `Git/utils/connexion.php`.
+- Lancer : `php -S localhost:8000 -t Git`, puis http://localhost:8000/index.php (MySQL requis, schéma non fourni).
+- Tests : `phpunit` (config `phpunit.xml.dist`, dossier `tests/`). Résultat : **OK, 37 tests, 84 assertions, 1 ignoré**
+  en ~1,5 s ; le test ignoré (`docs/API.md` absent) vérifie 49 actions dès que ce fichier est fusionné.
+- Syntaxe seule : `find Git -name '*.php' -exec php -l {} \;` → aucune erreur.
+- Les tests n'utilisent **pas MySQL** : `tests/stubs/utils/connexion.php` (SQLite en mémoire, schéma minimal
+  `tests/schema.sql`) est placé en tête de l'`include_path` par `tests/bootstrap.php`.
+- Couverture : CSRF, `h()`, inscription/connexion/rôles (dont injection SQL), droits des contrôleurs solde, stock,
+  staff, commande, syntaxe, routage, secrets en dur, cohérence avec `docs/API.md`.
+
+### Problèmes rencontrés
+- Sandbox : `repo.packagist.org`, `getcomposer.org` et `phar.phpunit.de` répondent 403. `composer validate` réussit,
+  `composer install` échoue : aucun `composer.lock` n'a été généré (à faire depuis un poste avec accès réseau).
+- `apt-get update` signale le dépôt nodesource en 403 : sans effet sur l'installation.
+- Les modèles appellent `Connexion::initConnexion()` dès l'`include` : sans le stub, tout test tenterait une connexion MySQL.
+- `Git/html_spe_char.php` commence par un saut de ligne avant `<?php` : la sortie part avant les `header()`
+  (« headers already sent »). Sans `output_buffering` dans php.ini, les redirections échouent ; les tests mettent `@`.
+- SQL propre à MySQL (`CURRENT_DATE()`, `CURRENT_DATE-1`) : non exécutable en SQLite, donc les modèles solde, stock,
+  commande et restock ne sont pas testés (seuls leurs contrôleurs le sont, sur les refus de droits).
+- `.env.example` n'est pas encore lu par le code : externaliser les identifiants demande une PR dédiée, avec test.
 
 ## Conventions observées
 - Classes `Mod_<nom>`, `Cont_<nom>`, `Modele_<nom> extends Connexion`, `Vue_<nom> extends VueGenerique`.
@@ -66,3 +86,6 @@ Chemins relatifs à `Git/`. Un module contient du front (`vue_*`) et du back (`m
 ## Points d'attention
 - `modules/module_acceuil/` est un doublon obsolète de `module_accueil/` ; `.idea/` est versionné.
 - Les écarts de sécurité connus sont listés en fin de `docs/API.md`.
+- Le montant du rechargement de solde n'est borné (10–100) que dans le HTML, pas côté serveur.
+- Les tests `ProjetTest` figent deux dettes (secrets dans `connexion.php`, CSRF absent de `stock`) : les corriger
+  oblige à mettre ces tests à jour.

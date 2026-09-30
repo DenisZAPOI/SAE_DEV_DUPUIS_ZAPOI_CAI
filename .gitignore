@@ -1,0 +1,52 @@
+# Secrets et configuration locale
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+config.local.php
+
+# Dépendances installées
+/vendor/
+/node_modules/
+
+# Tests et outils
+.phpunit.result.cache
+.phpunit.cache/
+/coverage/
+/build/
+*.cache
+
+# Données, dumps et logs
+*.sql
+!tests/schema.sql
+*.sqlite
+*.sqlite3
+*.log
+/logs/
+error_log
+php_errors.log
+
+# Fichiers déposés par les utilisateurs (documents légaux des associations)
+/Git/docsLegaux/*
+!/Git/docsLegaux/.gitkeep
+
+# Sessions et temporaires
+/tmp/
+*.tmp
+*.bak
+*.swp
+*~
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.code-workspace
+.project
+.settings/
+
+# Système
+.DS_Store
+Thumbs.db
+desktop.ini
