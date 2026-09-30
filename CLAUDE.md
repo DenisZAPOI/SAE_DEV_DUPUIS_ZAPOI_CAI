@@ -14,7 +14,7 @@ historique, récapitulatif de la journée, gestion du staff.
 ## Dossiers importants (tout le code est dans `Git/`)
 - `index.php` : routeur (`?module=`), puis `template.php` (layout, navbar selon `$_SESSION['role']`).
 - `modules/module_<nom>/` : un module MVC = `module_`, `controleur_`, `modele_`, `vue_<nom>.php`.
-- `utils/` : `Connexion` (PDO), `Token_CSRF`, `VueGenerique` ; `html_spe_char.php` : helper `h()`.
+- `utils/` : `Config` (lecture de `.env`), `Connexion` (PDO), `Token_CSRF`, `VueGenerique` ; `html_spe_char.php` : helper `h()`.
 - `docs/API.md` : contrat entre vues et contrôleurs (routes, champs, rôles).
 - `tests/` : tests PHPUnit ; `.env.example` : variables attendues ; `.gitignore` : exclusions (secrets, vendor, logs, dumps).
 
@@ -44,7 +44,8 @@ Chemins relatifs à `Git/`. Un module contient du front (`vue_*`) et du back (`m
 Vérifié le 30/09/2026 sur Ubuntu 24.04 (PHP 8.3.6, PHPUnit 9.6.17).
 - Installer : `apt-get install -y php-cli php-sqlite3 php-mbstring php-xml phpunit`
   (ou `composer install` si Packagist est accessible : `composer.json` déclare `phpunit/phpunit ^9.6`).
-- Configurer : copier `.env.example` en `.env` ; le code lit encore les identifiants dans `Git/utils/connexion.php`.
+- Configurer : copier `.env.example` en `.env` à la racine du projet et le renseigner ; `Git/utils/config.php` le lit
+  (une variable d'environnement du serveur prime). Sans `.env`, la connexion échoue avec « Configuration manquante ».
 - Lancer : `php -S localhost:8000 -t Git`, puis http://localhost:8000/index.php (MySQL requis, schéma non fourni).
 - Tests : `phpunit` (config `phpunit.xml.dist`, dossier `tests/`). Résultat : **OK, 37 tests, 84 assertions, 1 ignoré**
   en ~1,5 s ; le test ignoré (`docs/API.md` absent) vérifie 49 actions dès que ce fichier est fusionné.
@@ -63,7 +64,6 @@ Vérifié le 30/09/2026 sur Ubuntu 24.04 (PHP 8.3.6, PHPUnit 9.6.17).
   (« headers already sent »). Sans `output_buffering` dans php.ini, les redirections échouent ; les tests mettent `@`.
 - SQL propre à MySQL (`CURRENT_DATE()`, `CURRENT_DATE-1`) : non exécutable en SQLite, donc les modèles solde, stock,
   commande et restock ne sont pas testés (seuls leurs contrôleurs le sont, sur les refus de droits).
-- `.env.example` n'est pas encore lu par le code : externaliser les identifiants demande une PR dédiée, avec test.
 
 ## Conventions observées
 - Classes `Mod_<nom>`, `Cont_<nom>`, `Modele_<nom> extends Connexion`, `Vue_<nom> extends VueGenerique`.
@@ -75,8 +75,8 @@ Vérifié le 30/09/2026 sur Ubuntu 24.04 (PHP 8.3.6, PHPUnit 9.6.17).
 - Sorties HTML échappées avec `h()`. Code, noms et messages en français, indentation de 4 espaces.
 
 ## Règles de travail
-- **Jamais de secret dans un commit** (mot de passe, jeton, DSN de production). Utiliser un fichier de configuration
-  ignoré par Git. Les identifiants actuellement en dur dans `connexion.php` sont à externaliser, pas à recopier.
+- **Jamais de secret dans un commit** (mot de passe, jeton, DSN de production). Les lire avec `Config::get()`
+  depuis `.env` (ignoré par Git) et déclarer toute nouvelle clé dans `.env.example`.
 - **Une branche et une PR par modification** ; ne jamais pousser directement sur `main`.
 - **Tout correctif de sécurité est accompagné d'un test** qui échouait avant le correctif.
 - **Lancer les tests avant d'ouvrir une PR** et indiquer le résultat dans la description.
@@ -87,5 +87,4 @@ Vérifié le 30/09/2026 sur Ubuntu 24.04 (PHP 8.3.6, PHPUnit 9.6.17).
 - `modules/module_acceuil/` est un doublon obsolète de `module_accueil/` ; `.idea/` est versionné.
 - Les écarts de sécurité connus sont listés en fin de `docs/API.md`.
 - Le montant du rechargement de solde n'est borné (10–100) que dans le HTML, pas côté serveur.
-- Les tests `ProjetTest` figent deux dettes (secrets dans `connexion.php`, CSRF absent de `stock`) : les corriger
-  oblige à mettre ces tests à jour.
+- `ProjetTest` fige une dette (CSRF absent de `stock`) : la corriger oblige à mettre ce test à jour.
